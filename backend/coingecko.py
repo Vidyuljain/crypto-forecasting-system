@@ -88,6 +88,36 @@ def get_top_100_coins() -> list[dict]:
     return result
 
 
+def resolve_coin_id(user_input: str) -> str | None:
+    """
+    Convert user input (symbol or CoinGecko id) into the correct coin id.
+
+    Uses the cached top 100 coin list so inputs like BTC, btc, or bitcoin
+    all map to the right CoinGecko id (example: bitcoin).
+
+    Examples:
+        btc -> bitcoin
+        bnb -> binancecoin
+        xrp -> ripple
+        leo -> leo-token
+    """
+    lookup: dict[str, str] = {}
+
+    for coin in get_top_100_coins():
+        coin_id = coin["id"]
+        symbol = coin.get("symbol", "").lower()
+
+        # Match by CoinGecko id (example: "bitcoin").
+        lookup[coin_id.lower()] = coin_id
+
+        # Match by ticker symbol (example: "btc" -> "bitcoin").
+        if symbol:
+            lookup[symbol] = coin_id
+
+    key = user_input.strip().lower()
+    return lookup.get(key)
+
+
 def get_coin_details(coin_id: str) -> dict:
     """Return details for a specific coin id (example: 'bitcoin')."""
     response = requests.get(

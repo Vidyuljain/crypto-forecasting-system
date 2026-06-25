@@ -7,7 +7,7 @@ Run with:
 
 import requests
 from datetime import UTC, datetime
-from fastapi import FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 
 from coingecko import (
     format_historical_prices,
@@ -16,11 +16,24 @@ from coingecko import (
     get_historical_data,
     get_top_100_coins,
     get_top_coins,
+    resolve_coin_id,
 )
 from collector import collect_historical_data, collect_top_100_data
+import database
 
 # Create FastAPI app instance.
 app = FastAPI(title="Crypto Forecasting API", version="1.0.0")
+
+# Create database tables when the API starts.
+database.initialize_database()
+
+
+def get_resolved_coin_id(user_input: str) -> str:
+    """Convert BTC/btc/bitcoin style input into a CoinGecko id, or raise 404."""
+    coin_id = resolve_coin_id(user_input)
+    if not coin_id:
+        raise HTTPException(status_code=404, detail=f"Coin not found: '{user_input}'")
+    return coin_id
 
 
 # Root route to confirm API is running.
@@ -29,13 +42,60 @@ def read_root():
     return {"message": "Crypto Forecasting API is running"}
 
 
-# Return top coins from CoinGecko.
+# Return database connection status and row counts.
+@app.get("/database/status")
+def read_database_status():
+    try:
+        return database.get_database_status()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Database error: {exc}") from exc
+
+
+# Return historical price data from SQLite for ML models.
+@app.get("/ml/data/{coin_id}")
+def read_ml_data(coin_id: str):
+    """
+    Load saved historical prices for a coin from the database.
+
+    Example: GET /ml/data/bitcoin
+    Used by the ML module — does not call CoinGecko.
+    """
+    try:
+        history = database.get_coin_history(coin_id)
+
+        if not history:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No historical data in database for '{coin_id}'. Run /collect/{coin_id} first.",
+            )
+
+        return history
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Database error: {exc}") from exc
+
+
+# Return top coins from CoinGecko and save them to the database.
 @app.get("/coins")
 def read_coins(limit: int = 10):
     if limit < 1 or limit > 250:
         raise HTTPException(status_code=400, detail="limit must be between 1 and 250")
     try:
-        return get_top_coins(limit)
+        coins = get_top_coins(limit)
+
+        # Save each coin into the SQLite coins table.
+        for coin in coins:
+            database.save_coin_data(
+                coin_id=coin["id"],
+                symbol=coin.get("symbol", ""),
+                name=coin.get("name", ""),
+                current_price=coin.get("current_price") or 0,
+                market_cap=coin.get("market_cap") or 0,
+                volume=coin.get("total_volume") or 0,
+            )
+
+        return coins
     except requests.exceptions.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"CoinGecko HTTP error: {exc}") from exc
     except requests.exceptions.RequestException as exc:
@@ -62,7 +122,8 @@ def read_top_100_coins():
 @app.get("/coin/{coin_id}")
 def read_coin_details(coin_id: str):
     try:
-        data = get_coin_details(coin_id)
+        resolved_id = get_resolved_coin_id(coin_id)
+        data = get_coin_details(resolved_id)
         if not data or data.get("id") is None:
             raise HTTPException(status_code=404, detail="Coin not found")
         return data
@@ -82,8 +143,9 @@ def read_coin_details(coin_id: str):
 @app.get("/coin/{coin_id}/price")
 def read_coin_price(coin_id: str):
     try:
-        data = get_current_price(coin_id)
-        if coin_id not in data:
+        resolved_id = get_resolved_coin_id(coin_id)
+        data = get_current_price(resolved_id)
+        if resolved_id not in data:
             raise HTTPException(status_code=404, detail="Coin price not found")
         return data
     except HTTPException:
@@ -100,14 +162,16 @@ def read_coin_price(coin_id: str):
 @app.get("/coin/{coin_id}/live")
 def read_coin_live_price(coin_id: str):
     try:
+        resolved_id = get_resolved_coin_id(coin_id)
+
         # Use existing CoinGecko helper to fetch the latest USD price.
-        data = get_current_price(coin_id)
-        if coin_id not in data:
+        data = get_current_price(resolved_id)
+        if resolved_id not in data:
             raise HTTPException(status_code=404, detail="Coin price not found")
 
         return {
-            "coin": coin_id,
-            "price": round(data[coin_id]["usd"]),
+            "coin": resolved_id,
+            "price": round(data[resolved_id]["usd"]),
             "currency": "usd",
             "timestamp": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
         }
@@ -127,8 +191,10 @@ def read_coin_history(coin_id: str, days: int = 30):
     if days < 1:
         raise HTTPException(status_code=400, detail="days must be greater than 0")
     try:
+        resolved_id = get_resolved_coin_id(coin_id)
+
         # Fetch raw CoinGecko data, then convert it to simple JSON for the frontend/ML team.
-        raw_data = get_historical_data(coin_id, days)
+        raw_data = get_historical_data(resolved_id, days)
         clean_history = format_historical_prices(raw_data)
 
         if not clean_history:
@@ -147,35 +213,21 @@ def read_coin_history(coin_id: str, days: int = 30):
 
 # Download historical data for all top 100 coins and save CSV files.
 @app.get("/collect/top100")
-def collect_top_100_coin_data(days: int = 365):
+def collect_top_100_coin_data(background_tasks: BackgroundTasks, days: int = 365):
     """
-    Collect historical price data for the top 100 cryptocurrencies.
+    Start collecting historical price data for the top 100 cryptocurrencies.
 
     Example: GET /collect/top100
-    Saves files like: data/raw/bitcoin.csv, data/raw/ethereum.csv
+    Returns immediately; collection runs in the background.
+    Watch the server terminal for progress logs.
     """
     if days < 1:
         raise HTTPException(status_code=400, detail="days must be greater than 0")
 
-    try:
-        result = collect_top_100_data(days=days)
+    # Run the long collection job in the background so this request returns right away.
+    background_tasks.add_task(collect_top_100_data, days)
 
-        if result["coins_collected"] == 0:
-            raise HTTPException(status_code=500, detail="No coin datasets were collected")
-
-        return {
-            "message": "Top 100 crypto datasets collected",
-            "coins_collected": result["coins_collected"],
-            "failed_coins": result["failed_coins"],
-        }
-    except HTTPException:
-        raise
-    except requests.exceptions.HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"CoinGecko HTTP error: {exc}") from exc
-    except requests.exceptions.RequestException as exc:
-        raise HTTPException(status_code=503, detail=f"Network error: {exc}") from exc
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Unexpected error: {exc}") from exc
+    return {"message": "Top 100 collection started"}
 
 
 # Download historical prices and save them to data/raw/{coin_id}.csv
@@ -191,9 +243,17 @@ def collect_coin_data(coin_id: str, days: int = 365):
         raise HTTPException(status_code=400, detail="days must be greater than 0")
 
     try:
+        resolved_id = get_resolved_coin_id(coin_id)
+
         # Fetches from CoinGecko, builds a DataFrame, and saves the CSV file.
-        collect_historical_data(coin_id, days=days)
-        return {"message": f"{coin_id} historical data collected successfully"}
+        df = collect_historical_data(coin_id, days=days)
+
+        # Also save historical prices into the SQLite database.
+        for _, row in df.iterrows():
+            date_str = row["date"].strftime("%Y-%m-%d")
+            database.save_historical_data(resolved_id, date_str, float(row["price"]))
+
+        return {"message": f"{resolved_id} historical data collected successfully"}
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except requests.exceptions.HTTPError as exc:
