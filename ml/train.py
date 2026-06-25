@@ -85,16 +85,19 @@ def train_models(coin_id: str) -> dict:
         "best_model": best_model,
     }
 
-    # Step 7: Save trained models with joblib.
-    joblib.dump(linear_model, MODELS_DIR / f"{coin_id}_linear.pkl")
-    joblib.dump(forest_model, MODELS_DIR / f"{coin_id}_forest.pkl")
+    # Step 7: Save trained models with joblib (models/{coin_id}/linear.pkl, forest.pkl).
+    coin_dir = MODELS_DIR / coin_id
+    coin_dir.mkdir(parents=True, exist_ok=True)
+
+    joblib.dump(linear_model, coin_dir / "linear.pkl")
+    joblib.dump(forest_model, coin_dir / "forest.pkl")
 
     # Step 8: Save metrics as JSON.
-    metrics_path = MODELS_DIR / f"{coin_id}_metrics.json"
+    metrics_path = coin_dir / "metrics.json"
     with open(metrics_path, "w", encoding="utf-8") as file:
         json.dump(metrics, file, indent=2)
 
-    print(f"Models saved to {MODELS_DIR}")
+    print(f"Models saved to {coin_dir}")
     print(f"Metrics: {metrics}")
 
     return metrics

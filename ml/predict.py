@@ -34,8 +34,8 @@ def predict_future_prices(coin_id: str, days: int = 7) -> list[dict]:
     # Step 2: Create features from the historical data.
     X, _ = create_features(df)
 
-    # Step 3: Load the saved Random Forest model.
-    model_path = MODELS_DIR / f"{coin_id}_forest.pkl"
+    # Step 3: Load the saved Random Forest model (models/{coin_id}/forest.pkl).
+    model_path = MODELS_DIR / coin_id / "forest.pkl"
     if not model_path.exists():
         raise FileNotFoundError(
             f"Model not found: {model_path}. Run train_models('{coin_id}') first."
