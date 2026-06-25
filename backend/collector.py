@@ -7,10 +7,11 @@ the project's data/raw/ folder.
 """
 
 from pathlib import Path
+import time
 
 import pandas as pd
 
-from coingecko import get_historical_data
+from coingecko import get_historical_data, get_top_100_coins
 
 # Folder where CSV files are saved (backend/../data/raw/)
 RAW_DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
@@ -55,3 +56,48 @@ def collect_historical_data(coin_id: str, days: int = 365) -> pd.DataFrame:
 
     # Step 8: Return the dataframe so other code can use it immediately.
     return df
+
+
+def collect_top_100_data(days: int = 365) -> dict:
+    """
+    Download historical data for the top 100 coins and save each as a CSV file.
+
+    Example output files:
+        data/raw/bitcoin.csv
+        data/raw/ethereum.csv
+        data/raw/dogecoin.csv
+
+    Returns:
+        Dictionary with coins_collected count and failed_coins list.
+    """
+    # Step 1: Get the current top 100 cryptocurrencies.
+    top_coins = get_top_100_coins()
+    total_coins = len(top_coins)
+    collected_count = 0
+    failed_coins = []
+
+    # Step 2: Loop through each coin and save its historical data.
+    for index, coin in enumerate(top_coins, start=1):
+        coin_id = coin["id"]
+        coin_name = coin.get("name", coin_id)
+
+        # Show simple progress in the terminal while collecting data.
+        print(f"Collecting {index}/{total_coins} {coin_name}")
+
+        try:
+            collect_historical_data(coin_id, days=days)
+            collected_count += 1
+        except Exception as exc:
+            # Keep going even if one coin fails (rate limit, network, missing data).
+            failed_coins.append(coin_id)
+            print(f"Failed to collect {coin_name}: {exc}")
+            continue
+
+        # Step 3: Wait between API calls to avoid CoinGecko 429 rate limit errors.
+        if index < total_coins:
+            time.sleep(2)
+
+    return {
+        "coins_collected": collected_count,
+        "failed_coins": failed_coins,
+    }
