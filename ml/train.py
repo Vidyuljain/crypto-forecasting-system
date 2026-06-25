@@ -1,7 +1,7 @@
 """
 train.py — Full ML training pipeline for cryptocurrency price forecasting.
 
-Loads data from the backend, trains models, evaluates them, and saves results.
+Loads data from CSV files, trains models, evaluates them, and saves results.
 """
 
 import json
@@ -9,14 +9,17 @@ from pathlib import Path
 
 import joblib
 import numpy as np
+import pandas as pd
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
-from data_loader import load_crypto_data
 from models import train_linear_model, train_random_forest
 from preprocessing import create_features
 
 # Folder where trained models and metrics are saved.
 MODELS_DIR = Path(__file__).resolve().parent / "models"
+
+# Folder where collected coin CSV files are stored.
+RAW_DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
 
 
 def train_models(coin_id: str) -> dict:
@@ -31,9 +34,15 @@ def train_models(coin_id: str) -> dict:
     """
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Step 1: Load historical price data from the backend API.
-    print(f"Loading data for {coin_id}...")
-    df = load_crypto_data(coin_id)
+    # Step 1: Load historical price data from CSV file (data/raw/{coin_id}.csv).
+    csv_path = RAW_DATA_DIR / f"{coin_id}.csv"
+    if not csv_path.exists():
+        raise FileNotFoundError(f"No CSV data for '{coin_id}' at {csv_path}")
+
+    print(f"Loading data for {coin_id} from {csv_path}...")
+    df = pd.read_csv(csv_path)
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.sort_values("date").reset_index(drop=True)
 
     # Step 2: Create features (X) and target (y).
     X, y = create_features(df)

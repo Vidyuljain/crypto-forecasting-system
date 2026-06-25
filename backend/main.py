@@ -5,9 +5,18 @@ Run with:
     uvicorn main:app --reload
 """
 
+import sys
+from pathlib import Path
+
 import requests
 from datetime import UTC, datetime
 from fastapi import BackgroundTasks, FastAPI, HTTPException
+
+# Add the ml folder to the import path so we can use the prediction pipeline.
+ML_DIR = Path(__file__).resolve().parent.parent / "ml"
+sys.path.insert(0, str(ML_DIR))
+
+from predict import predict_future_prices
 
 from coingecko import (
     format_historical_prices,
@@ -74,6 +83,45 @@ def read_ml_data(coin_id: str):
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Database error: {exc}") from exc
+
+
+# Return ML price forecasts for a coin.
+@app.get("/predict/{coin_id}")
+def predict_coin_prices(coin_id: str, days: int = 7):
+    """
+    Predict future prices using the trained ML model.
+
+    Example: GET /predict/bitcoin?days=7
+    """
+    if days < 1:
+        raise HTTPException(status_code=400, detail="days must be greater than 0")
+
+    try:
+        resolved_id = get_resolved_coin_id(coin_id)
+        predictions = predict_future_prices(resolved_id, days=days)
+
+        return {
+            "coin": resolved_id,
+            "predictions": predictions,
+        }
+    except HTTPException:
+        raise
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Model not trained for '{coin_id}'. Run ml/train.py first.",
+        ) from exc
+    except requests.exceptions.HTTPError as exc:
+        if exc.response is not None and exc.response.status_code == 404:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No historical data for '{coin_id}'. Run /collect/{coin_id} first.",
+            ) from exc
+        raise HTTPException(status_code=502, detail=f"Failed to load coin data: {exc}") from exc
+    except requests.exceptions.RequestException as exc:
+        raise HTTPException(status_code=503, detail=f"Network error: {exc}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Prediction error: {exc}") from exc
 
 
 # Return top coins from CoinGecko and save them to the database.
