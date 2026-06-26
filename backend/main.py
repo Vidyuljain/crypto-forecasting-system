@@ -261,21 +261,45 @@ def read_coin_history(coin_id: str, days: int = 30):
 
 # Download historical data for all top 100 coins and save CSV files.
 @app.get("/collect/top100")
-def collect_top_100_coin_data(background_tasks: BackgroundTasks, days: int = 365):
+def collect_top_100_coin_data(
+    background_tasks: BackgroundTasks,
+    start: int = 0,
+    limit: int = 25,
+    days: int = 365,
+):
     """
-    Start collecting historical price data for the top 100 cryptocurrencies.
+    Start collecting historical price data for a batch of the top 100 cryptocurrencies.
 
-    Example: GET /collect/top100
-    Returns immediately; collection runs in the background.
-    Watch the server terminal for progress logs.
+    Examples:
+    /collect/top100?start=0&limit=25
+    /collect/top100?start=25&limit=25
+    /collect/top100?start=50&limit=25
+    /collect/top100?start=75&limit=25
+
+    Collection runs in the background.
     """
+
     if days < 1:
         raise HTTPException(status_code=400, detail="days must be greater than 0")
 
-    # Run the long collection job in the background so this request returns right away.
-    background_tasks.add_task(collect_top_100_data, days)
+    if start < 0:
+        raise HTTPException(status_code=400, detail="start must be 0 or greater")
 
-    return {"message": "Top 100 collection started"}
+    if limit < 1 or limit > 100:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 100")
+
+    background_tasks.add_task(
+        collect_top_100_data,
+        start,
+        limit,
+        days,
+    )
+
+    return {
+        "message": "Top 100 collection started",
+        "start": start,
+        "limit": limit,
+    }
 
 
 # Download historical prices and save them to data/raw/{coin_id}.csv

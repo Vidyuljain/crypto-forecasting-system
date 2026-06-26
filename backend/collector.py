@@ -75,7 +75,7 @@ def collect_historical_data(coin_id: str, days: int = 365, resolve: bool = True)
     return df
 
 
-def collect_top_100_data(days: int = 365) -> dict:
+def collect_top_100_data(start: int = 0, limit: int = 25, days: int = 365) -> dict:
     """
     Download historical data for the top 100 coins and save each as a CSV file.
 
@@ -89,6 +89,7 @@ def collect_top_100_data(days: int = 365) -> dict:
     """
     # get_top_100_coins()
     top_coins = get_top_100_coins()
+    top_coins = top_coins[start:start + limit]
     total_coins = len(top_coins)
     collected_count = 0
     failed_coins = []
