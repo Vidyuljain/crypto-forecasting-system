@@ -5,6 +5,7 @@ Run with:
     uvicorn main:app --reload
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -87,21 +88,25 @@ def read_ml_data(coin_id: str):
 
 # Return ML price forecasts for a coin.
 @app.get("/predict/{coin_id}")
-def predict_coin_prices(coin_id: str, days: int = 7):
+def predict_coin_prices(coin_id: str, days: int = 7, model: str = "random_forest"):
     """
     Predict future prices using the trained ML model.
 
-    Example: GET /predict/bitcoin?days=7
+    Example: GET /predict/bitcoin?days=7&model=random_forest
     """
     if days < 1:
         raise HTTPException(status_code=400, detail="days must be greater than 0")
 
+    if model not in {"linear_regression", "random_forest"}:
+        raise HTTPException(status_code=400, detail="model must be linear_regression or random_forest")
+
     try:
         resolved_id = get_resolved_coin_id(coin_id)
-        predictions = predict_future_prices(resolved_id, days=days)
+        predictions = predict_future_prices(resolved_id, days=days, model=model)
 
         return {
             "coin": resolved_id,
+            "model": model,
             "predictions": predictions,
         }
     except HTTPException:
@@ -122,6 +127,24 @@ def predict_coin_prices(coin_id: str, days: int = 7):
         raise HTTPException(status_code=503, detail=f"Network error: {exc}") from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Prediction error: {exc}") from exc
+
+
+# Return ML training metrics for a coin (best model, RMSE, etc.).
+@app.get("/metrics/{coin_id}")
+def get_coin_metrics(coin_id: str):
+    try:
+        resolved_id = get_resolved_coin_id(coin_id)
+        metrics_path = ML_DIR / "models" / resolved_id / "metrics.json"
+
+        if not metrics_path.exists():
+            raise HTTPException(status_code=404, detail=f"Metrics not found for '{coin_id}'")
+
+        with open(metrics_path, encoding="utf-8") as file:
+            return json.load(file)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Metrics error: {exc}") from exc
 
 
 # Return top coins from CoinGecko and save them to the database.

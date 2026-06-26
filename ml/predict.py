@@ -5,6 +5,7 @@ Loads historical data from CSV files, applies the saved Random Forest model,
 and forecasts the next several days of prices.
 """
 
+from datetime import date, timedelta
 from pathlib import Path
 
 import joblib
@@ -19,7 +20,7 @@ MODELS_DIR = Path(__file__).resolve().parent / "models"
 RAW_DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
 
 
-def predict_future_prices(coin_id: str, days: int = 7) -> list[dict]:
+def predict_future_prices(coin_id: str, days: int = 7, model: str = "random_forest") -> list[dict]:
     """
     Predict future prices for a coin using the saved Random Forest model.
 
@@ -42,9 +43,9 @@ def predict_future_prices(coin_id: str, days: int = 7) -> list[dict]:
     # Step 2: Create features from the historical data.
     X, _ = create_features(df)
 
-    # Step 3: Load the saved Random Forest model for this coin.
-    # Example: bitcoin -> models/bitcoin/forest.pkl
-    model_path = MODELS_DIR / coin_id / "forest.pkl"
+    # Step 3: Load the saved model for this coin (linear or random forest).
+    model_file = "linear.pkl" if model == "linear_regression" else "forest.pkl"
+    model_path = MODELS_DIR / coin_id / model_file
     if not model_path.exists():
         raise FileNotFoundError(f"Model not trained for {coin_id}. Run train_all.py")
 
@@ -54,7 +55,7 @@ def predict_future_prices(coin_id: str, days: int = 7) -> list[dict]:
     previous_price = float(X.iloc[-1]["previous_price"])
     seven_day_average = float(X.iloc[-1]["7_day_average"])
     recent_prices = list(df["price"].tail(7))
-    last_date = pd.Timestamp(df["date"].iloc[-1])
+    today = date.today()
 
     predictions = []
 
@@ -69,7 +70,8 @@ def predict_future_prices(coin_id: str, days: int = 7) -> list[dict]:
         )
         predicted_price = float(model.predict(features)[0])
 
-        future_date = last_date + pd.Timedelta(days=day_offset)
+        # Prediction dates start from tomorrow based on today's date.
+        future_date = today + timedelta(days=day_offset)
 
         predictions.append(
             {
