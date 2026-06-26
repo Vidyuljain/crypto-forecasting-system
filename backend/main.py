@@ -262,8 +262,10 @@ def read_coin_live_price(coin_id: str):
     except HTTPException:
         raise
     except requests.exceptions.HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"CoinGecko HTTP error: {exc}") from exc
+         print("HTTP ERROR:", repr(exc))
+         raise HTTPException(status_code=502, detail=f"CoinGecko HTTP error: {exc}") from exc
     except requests.exceptions.RequestException as exc:
+        print("NETWORK ERROR:", repr(exc))
         raise HTTPException(status_code=503, detail=f"Network error: {exc}") from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Unexpected error: {exc}") from exc

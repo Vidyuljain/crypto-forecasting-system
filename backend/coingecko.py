@@ -4,8 +4,10 @@ Simple helper functions for CoinGecko API calls.
 This file keeps all external API calls in one place so `main.py`
 stays clean and easy to understand.
 """
+_price_cache = {}
+_price_cache_time = {}
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import requests
 
@@ -138,13 +140,42 @@ def get_coin_details(coin_id: str) -> dict:
 
 def get_current_price(coin_id: str) -> dict:
     """Return current USD price for a specific coin."""
-    response = requests.get(
-        f"{BASE_URL}/simple/price",
-        params={"ids": coin_id, "vs_currencies": "usd"},
-        timeout=20,
-    )
-    response.raise_for_status()
-    return response.json()
+    global _price_cache, _price_cache_time
+    now = datetime.now(UTC)
+
+    if (
+        coin_id in _price_cache
+        and coin_id in _price_cache_time
+        and now - _price_cache_time[coin_id] < timedelta(minutes=5)
+):
+     return _price_cache[coin_id]
+
+    try:
+        response = requests.get(
+            f"{BASE_URL}/simple/price",
+            params={
+                "ids": coin_id,
+                "vs_currencies": "usd",
+            },
+            timeout=20,
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+
+        # Save latest successful price
+        _price_cache[coin_id] = data
+        _price_cache_time[coin_id] = now
+        
+        return data
+
+    except requests.exceptions.RequestException:
+        # If CoinGecko is temporarily unavailable, return the last known price.
+        if coin_id in _price_cache:
+            return _price_cache[coin_id]
+
+        raise
 
 
 def get_historical_data(coin_id: str, days: int = 30) -> dict:
