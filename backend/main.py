@@ -9,9 +9,11 @@ import json
 import sys
 from pathlib import Path
 
+import pandas as pd
 import requests
 from datetime import UTC, datetime
 from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 # Add the ml folder to the import path so we can use the prediction pipeline.
 ML_DIR = Path(__file__).resolve().parent.parent / "ml"
@@ -20,10 +22,8 @@ sys.path.insert(0, str(ML_DIR))
 from predict import predict_future_prices
 
 from coingecko import (
-    format_historical_prices,
     get_coin_details,
     get_current_price,
-    get_historical_data,
     get_top_100_coins,
     get_top_coins,
     resolve_coin_id,
@@ -31,8 +31,21 @@ from coingecko import (
 from collector import collect_historical_data, collect_top_100_data
 import database
 
-# Create FastAPI app instance.
-app = FastAPI(title="Crypto Forecasting API", version="1.0.0")
+# Local CSV files collected by /collect/{coin_id} (avoids CoinGecko on history charts).
+RAW_DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
+
+app = FastAPI(
+    title="Crypto Forecasting API",
+    version="1.0.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Create database tables when the API starts.
 database.initialize_database()
@@ -264,20 +277,31 @@ def read_coin_history(coin_id: str, days: int = 30):
     try:
         resolved_id = get_resolved_coin_id(coin_id)
 
-        # Fetch raw CoinGecko data, then convert it to simple JSON for the frontend/ML team.
-        raw_data = get_historical_data(resolved_id, days)
-        clean_history = format_historical_prices(raw_data)
+        # Use collected CSV data instead of CoinGecko to avoid rate limit 502 errors.
+        csv_path = RAW_DATA_DIR / f"{resolved_id}.csv"
+        if not csv_path.exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Historical data not found for '{resolved_id}'. Run /collect/{resolved_id} first.",
+            )
 
-        if not clean_history:
+        df = pd.read_csv(csv_path)
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.sort_values("date").reset_index(drop=True)
+        df = df.tail(days)
+
+        if df.empty:
             raise HTTPException(status_code=404, detail="Historical data not found")
 
-        return clean_history
+        return [
+            {
+                "date": row["date"].strftime("%Y-%m-%d"),
+                "price": round(float(row["price"]), 2),
+            }
+            for _, row in df.iterrows()
+        ]
     except HTTPException:
         raise
-    except requests.exceptions.HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"CoinGecko HTTP error: {exc}") from exc
-    except requests.exceptions.RequestException as exc:
-        raise HTTPException(status_code=503, detail=f"Network error: {exc}") from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Unexpected error: {exc}") from exc
 
