@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import '../api/api_service.dart';
@@ -32,25 +33,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Map<String, dynamic>? _metrics;
 
   int _historyDays = 30;
-  int _predictionDays = 7;
+  int _forecastDays = 7;
   String _selectedModel = 'random_forest';
 
   bool _loading = true;
   String? _error;
 
   Timer? _livePriceTimer;
+  late final TextEditingController _forecastDaysController;
 
   final NumberFormat _priceFormat = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
 
   @override
   void initState() {
     super.initState();
+    _forecastDaysController = TextEditingController(text: '7');
     _loadCoins();
   }
 
   @override
   void dispose() {
     _livePriceTimer?.cancel();
+    _forecastDaysController.dispose();
     super.dispose();
   }
 
@@ -121,7 +125,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final history = await ApiService.getHistory(_selectedCoinId!, _historyDays);
       final prediction = await ApiService.getPrediction(
         _selectedCoinId!,
-        _predictionDays,
+        _forecastDays,
         model: _selectedModel,
       );
 
@@ -175,6 +179,47 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _loadDashboardData();
   }
 
+  /// Apply forecast days from the input (min 1, no empty values).
+  void _applyForecastDays(String value) {
+    if (value.isEmpty) {
+      _forecastDaysController.text = _forecastDays.toString();
+      return;
+    }
+
+    final days = int.tryParse(value);
+    if (days == null || days < 1) {
+      _forecastDaysController.text = _forecastDays.toString();
+      return;
+    }
+
+    if (days == _forecastDays) return;
+
+    setState(() => _forecastDays = days);
+    _reloadPredictions();
+  }
+
+  /// Fetch predictions only when forecast days or model context changes.
+  Future<void> _reloadPredictions() async {
+    if (_selectedCoinId == null) return;
+
+    try {
+      final prediction = await ApiService.getPrediction(
+        _selectedCoinId!,
+        _forecastDays,
+        model: _selectedModel,
+      );
+      if (!mounted) return;
+
+      setState(() {
+        _predictions = prediction['predictions'] as List<dynamic>? ?? [];
+        _error = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = e.toString());
+    }
+  }
+
   String _bestModelLabel() {
     final best = _metrics?['best_model'] as String?;
     if (best == 'linear_regression') return 'Linear Regression';
@@ -182,31 +227,54 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return 'Unknown';
   }
 
+  /// CSV history plus the latest live price as the newest actual point.
+  List<Map<String, dynamic>> _actualHistoryWithLive() {
+    final points = <Map<String, dynamic>>[];
+    for (final item in _history) {
+      points.add(Map<String, dynamic>.from(item as Map<String, dynamic>));
+    }
+
+    final livePrice = (_livePrice?['price'] as num?)?.toDouble();
+    if (livePrice != null) {
+      final date = _livePrice?['timestamp'] as String? ??
+          DateFormat('yyyy-MM-dd').format(DateTime.now());
+      points.add({'date': date, 'price': livePrice});
+    }
+
+    return points;
+  }
+
   List<FlSpot> _historySpots() {
-    return List.generate(_history.length, (index) {
-      final item = _history[index] as Map<String, dynamic>;
-      final price = (item['price'] as num).toDouble();
+    final data = _actualHistoryWithLive();
+    return List.generate(data.length, (index) {
+      final price = (data[index]['price'] as num).toDouble();
       return FlSpot(index.toDouble(), price);
     });
   }
 
-  /// Build actual vs predicted chart using recent history + forecast.
+  /// X-axis index where the orange prediction line begins (after all actual points).
+  double? _predictionBoundaryX() {
+    final actual = _actualHistoryWithLive();
+    if (actual.isEmpty || _predictions.isEmpty) return null;
+    return actual.length.toDouble();
+  }
+
+  /// Green = actual history. Orange dotted = forecast, connected from last actual point.
   List<LineChartBarData> _comparisonBars() {
     final actualSpots = _historySpots();
     if (actualSpots.isEmpty || _predictions.isEmpty) return [];
 
-    final startIndex = actualSpots.length.toDouble();
-    final predictedSpots = List.generate(_predictions.length, (index) {
+    final boundaryX = _predictionBoundaryX()!;
+    final lastActual = actualSpots.last;
+
+    final forecastSpots = List.generate(_predictions.length, (index) {
       final item = _predictions[index] as Map<String, dynamic>;
       final price = (item['predicted_price'] as num).toDouble();
-      return FlSpot(startIndex + index.toDouble(), price);
+      return FlSpot(boundaryX + index.toDouble(), price);
     });
 
-    // Connect last actual point to first predicted point for continuity.
-    final bridgeSpots = [
-      actualSpots.last,
-      predictedSpots.first,
-    ];
+    // Anchor orange line to the last actual point so the transition has no visual gap.
+    final predictedSpots = [lastActual, ...forecastSpots];
 
     return [
       LineChartBarData(
@@ -217,22 +285,51 @@ class _DashboardScreenState extends State<DashboardScreen> {
         dotData: const FlDotData(show: false),
       ),
       LineChartBarData(
-        spots: bridgeSpots,
-        isCurved: false,
-        color: predictedColor.withOpacity(0.5),
-        barWidth: 2,
-        dashArray: [6, 4],
-        dotData: const FlDotData(show: false),
-      ),
-      LineChartBarData(
         spots: predictedSpots,
         isCurved: true,
         color: predictedColor,
         barWidth: 3,
-        dashArray: [8, 4],
-        dotData: const FlDotData(show: true),
+        dashArray: [8, 6],
+        dotData: FlDotData(
+          show: true,
+          checkToShowDot: (spot, _) => spot.x >= boundaryX,
+          getDotPainter: (spot, percent, bar, index) => FlDotCirclePainter(
+            radius: 3,
+            color: predictedColor,
+            strokeWidth: 1,
+            strokeColor: Colors.white,
+          ),
+        ),
       ),
     ];
+  }
+
+  /// Custom tooltip labels so actual and prediction never show duplicate values.
+  List<LineTooltipItem> _comparisonTooltipItems(List<LineBarSpot> touchedSpots) {
+    final seenX = <double>{};
+    final items = <LineTooltipItem>[];
+
+    // Prefer the green actual series when both lines share the anchor point.
+    final sorted = List<LineBarSpot>.from(touchedSpots)
+      ..sort((a, b) => a.barIndex.compareTo(b.barIndex));
+
+    for (final spot in sorted) {
+      if (seenX.contains(spot.x)) continue;
+      seenX.add(spot.x);
+
+      final isActual = spot.barIndex == 0;
+      final label = isActual ? 'Actual' : 'Prediction';
+      final color = isActual ? actualColor : predictedColor;
+
+      items.add(
+        LineTooltipItem(
+          '$label:\n${_priceFormat.format(spot.y)}',
+          TextStyle(color: color, fontWeight: FontWeight.w600, fontSize: 12),
+        ),
+      );
+    }
+
+    return items;
   }
 
   Widget _periodButton(String label, int days) {
@@ -370,13 +467,47 @@ class _DashboardScreenState extends State<DashboardScreen> {
       );
     }
 
+    final boundaryX = _predictionBoundaryX();
+
     return LineChart(
       LineChartData(
-        gridData: FlGridData(show: true, drawVerticalLine: false, getDrawingHorizontalLine: (v) {
-          return FlLine(color: Colors.white12, strokeWidth: 1);
-        }),
+        gridData: FlGridData(
+          show: true,
+          drawVerticalLine: false,
+          getDrawingHorizontalLine: (value) {
+            return FlLine(color: Colors.white12, strokeWidth: 1);
+          },
+        ),
         titlesData: const FlTitlesData(show: false),
         borderData: FlBorderData(show: false),
+        extraLinesData: boundaryX != null
+            ? ExtraLinesData(
+                verticalLines: [
+                  VerticalLine(
+                    x: boundaryX,
+                    color: Colors.white38,
+                    strokeWidth: 1.5,
+                    dashArray: [6, 4],
+                    label: VerticalLineLabel(
+                      show: true,
+                      alignment: Alignment.topRight,
+                      padding: const EdgeInsets.only(right: 4, bottom: 4),
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      labelResolver: (_) => 'Prediction starts',
+                    ),
+                  ),
+                ],
+              )
+            : const ExtraLinesData(),
+        lineTouchData: LineTouchData(
+          touchTooltipData: LineTouchTooltipData(
+            getTooltipItems: _comparisonTooltipItems,
+          ),
+        ),
         lineBarsData: bars,
       ),
     );
@@ -474,6 +605,46 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 ),
                               ),
                               const SizedBox(height: 12),
+                              const Text(
+                                'Forecast days:',
+                                style: TextStyle(color: Colors.white70),
+                              ),
+                              const SizedBox(height: 8),
+                              SizedBox(
+                                width: 88,
+                                child: TextField(
+                                  controller: _forecastDaysController,
+                                  keyboardType: TextInputType.number,
+                                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                                  style: const TextStyle(color: Colors.white),
+                                  decoration: InputDecoration(
+                                    filled: true,
+                                    fillColor: background,
+                                    enabledBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                      borderSide: const BorderSide(color: Colors.white24),
+                                    ),
+                                    focusedBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                      borderSide: const BorderSide(color: accent),
+                                    ),
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 10,
+                                    ),
+                                  ),
+                                  onSubmitted: _applyForecastDays,
+                                  onEditingComplete: () {
+                                    _applyForecastDays(_forecastDaysController.text);
+                                  },
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              const Text(
+                                'Model:',
+                                style: TextStyle(color: Colors.white70),
+                              ),
+                              const SizedBox(height: 8),
                               DropdownButton<String>(
                                 isExpanded: true,
                                 dropdownColor: cardColor,
@@ -512,7 +683,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
                       _chartCard(
                         title: 'Actual vs Predicted',
-                        subtitle: 'Green = actual history, Orange = $_predictionDays-day forecast',
+                        subtitle:
+                            'Green = historical + live price | Orange dotted = ML future forecast',
                         chart: _comparisonChart(),
                       ),
                     ],

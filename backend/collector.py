@@ -68,6 +68,14 @@ def collect_historical_data(coin_id: str, days: int = 365, resolve: bool = True)
     # Step 7: Create data/raw/ folder if it does not exist yet.
     RAW_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
+    # Drop zero, negative, and missing prices so bad CoinGecko rows never enter CSV datasets.
+    # This prevents charts and ML models from seeing invalid $0 market prices.
+    df = df[df["price"] > 0]
+    df = df.dropna(subset=["price"])
+    df = df.reset_index(drop=True)
+    if df.empty:
+        raise ValueError("Invalid price data received")
+
     # Step 8: Save CSV file (example: data/raw/ripple.csv).
     df.to_csv(csv_path, index=False)
 
