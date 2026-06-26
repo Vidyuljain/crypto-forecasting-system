@@ -1,9 +1,0 @@
-{
-  "linear_mae": 0.0,
-  "linear_rmse": 0.0,
-  "linear_r2": -0.0478,
-  "forest_mae": 0.0,
-  "forest_rmse": 0.0,
-  "forest_r2": 0.0098,
-  "best_model": "random_forest"
-}

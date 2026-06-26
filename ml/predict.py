@@ -1,8 +1,8 @@
 """
 predict.py — Predict future cryptocurrency prices using a trained model.
 
-Loads historical data, applies the saved Random Forest model, and forecasts
-the next several days of prices.
+Loads historical data from CSV files, applies the saved Random Forest model,
+and forecasts the next several days of prices.
 """
 
 from pathlib import Path
@@ -10,11 +10,13 @@ from pathlib import Path
 import joblib
 import pandas as pd
 
-from data_loader import load_crypto_data
 from preprocessing import create_features
 
-# Folder where trained models are saved (same as train.py).
+# Folder where trained models are saved.
 MODELS_DIR = Path(__file__).resolve().parent / "models"
+
+# Folder where collected coin CSV files are stored.
+RAW_DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
 
 
 def predict_future_prices(coin_id: str, days: int = 7) -> list[dict]:
@@ -22,24 +24,30 @@ def predict_future_prices(coin_id: str, days: int = 7) -> list[dict]:
     Predict future prices for a coin using the saved Random Forest model.
 
     Args:
-        coin_id: CoinGecko coin id (example: "bitcoin").
+        coin_id: CoinGecko coin id (example: "bitcoin", "ethereum", "ripple").
         days:    Number of future days to predict (default: 7).
 
     Returns:
         List of dictionaries: [{"date": "...", "predicted_price": ...}, ...]
     """
-    # Step 1: Load historical price data from the backend.
-    df = load_crypto_data(coin_id)
+    # Step 1: Load historical price data from CSV (data/raw/{coin_id}.csv).
+    csv_path = RAW_DATA_DIR / f"{coin_id}.csv"
+    if not csv_path.exists():
+        raise FileNotFoundError(f"No CSV data for '{coin_id}' at {csv_path}")
+
+    df = pd.read_csv(csv_path)
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.sort_values("date").reset_index(drop=True)
 
     # Step 2: Create features from the historical data.
     X, _ = create_features(df)
 
-    # Step 3: Load the saved Random Forest model (models/{coin_id}/forest.pkl).
+    # Step 3: Load the saved Random Forest model for this coin.
+    # Example: bitcoin -> models/bitcoin/forest.pkl
     model_path = MODELS_DIR / coin_id / "forest.pkl"
     if not model_path.exists():
-        raise FileNotFoundError(
-            f"Model not found: {model_path}. Run train_models('{coin_id}') first."
-        )
+        raise FileNotFoundError(f"Model not trained for {coin_id}. Run train_all.py")
+
     model = joblib.load(model_path)
 
     # Step 4: Start with the latest available feature row and recent prices.

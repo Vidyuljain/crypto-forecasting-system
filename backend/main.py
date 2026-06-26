@@ -318,7 +318,11 @@ def collect_coin_data(coin_id: str, days: int = 365):
         resolved_id = get_resolved_coin_id(coin_id)
 
         # Fetches from CoinGecko, builds a DataFrame, and saves the CSV file.
-        df = collect_historical_data(coin_id, days=days)
+        df = collect_historical_data(
+            resolved_id,
+            days=days,
+            resolve=False,
+        )
 
         # Also save historical prices into the SQLite database.
         for _, row in df.iterrows():
