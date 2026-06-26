@@ -120,7 +120,7 @@ def collect_top_100_data(start: int = 0, limit: int = 25, days: int = 365) -> di
 
         # Wait 5 seconds after a new API call to avoid CoinGecko 429 rate limit errors.
         if index < total_coins:
-            time.sleep(5)
+            time.sleep(15)
 
     return {
         "coins_collected": collected_count,
