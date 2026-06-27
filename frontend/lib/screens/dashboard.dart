@@ -259,7 +259,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return actual.length.toDouble();
   }
 
-  /// Green = actual history. Orange dotted = forecast, connected from last actual point.
+  /// Green = actual history. Orange dotted = forecast. Bridge connects the two visually.
   List<LineChartBarData> _comparisonBars() {
     final actualSpots = _historySpots();
     if (actualSpots.isEmpty || _predictions.isEmpty) return [];
@@ -273,8 +273,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       return FlSpot(boundaryX + index.toDouble(), price);
     });
 
-    // Anchor orange line to the last actual point so the transition has no visual gap.
-    final predictedSpots = [lastActual, ...forecastSpots];
+    final bridgeSpots = [lastActual, forecastSpots.first];
 
     return [
       LineChartBarData(
@@ -285,14 +284,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
         dotData: const FlDotData(show: false),
       ),
       LineChartBarData(
-        spots: predictedSpots,
+        spots: forecastSpots,
         isCurved: true,
         color: predictedColor,
         barWidth: 3,
         dashArray: [8, 6],
         dotData: FlDotData(
           show: true,
-          checkToShowDot: (spot, _) => spot.x >= boundaryX,
           getDotPainter: (spot, percent, bar, index) => FlDotCirclePainter(
             radius: 3,
             color: predictedColor,
@@ -301,20 +299,37 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         ),
       ),
+      LineChartBarData(
+        spots: bridgeSpots,
+        isCurved: false,
+        color: predictedColor,
+        barWidth: 3,
+        dashArray: [8, 6],
+        dotData: const FlDotData(show: false),
+      ),
     ];
   }
 
-  /// Custom tooltip labels so actual and prediction never show duplicate values.
-  List<LineTooltipItem> _comparisonTooltipItems(List<LineBarSpot> touchedSpots) {
+  bool _isBridgeBar(LineChartBarData barData) {
+    final spots = barData.spots;
+    return spots.length == 2 && !barData.isCurved && barData.dashArray != null;
+  }
+
+  /// Custom tooltip labels; bridge line (bar index 2) is non-interactive.
+  List<LineTooltipItem?> _comparisonTooltipItems(List<LineBarSpot> touchedSpots) {
     final seenX = <double>{};
-    final items = <LineTooltipItem>[];
+    final items = <LineTooltipItem?>[];
 
-    // Prefer the green actual series when both lines share the anchor point.
-    final sorted = List<LineBarSpot>.from(touchedSpots)
-      ..sort((a, b) => a.barIndex.compareTo(b.barIndex));
+    for (final spot in touchedSpots) {
+      if (spot.barIndex == 2) {
+        items.add(null);
+        continue;
+      }
 
-    for (final spot in sorted) {
-      if (seenX.contains(spot.x)) continue;
+      if (seenX.contains(spot.x)) {
+        items.add(null);
+        continue;
+      }
       seenX.add(spot.x);
 
       final isActual = spot.barIndex == 0;
@@ -504,6 +519,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
               )
             : const ExtraLinesData(),
         lineTouchData: LineTouchData(
+          getTouchedSpotIndicator: (barData, spotIndexes) {
+            if (_isBridgeBar(barData)) {
+              return List.filled(spotIndexes.length, null);
+            }
+            return spotIndexes
+                .map((_) => TouchedSpotIndicatorData(
+                      FlLine(color: Colors.white38, strokeWidth: 2),
+                      FlDotData(
+                        show: true,
+                        getDotPainter: (spot, percent, bar, index) =>
+                            FlDotCirclePainter(
+                          radius: 4,
+                          color: Colors.white,
+                          strokeWidth: 2,
+                          strokeColor: Colors.white54,
+                        ),
+                      ),
+                    ))
+                .toList();
+          },
           touchTooltipData: LineTouchTooltipData(
             getTooltipItems: _comparisonTooltipItems,
           ),

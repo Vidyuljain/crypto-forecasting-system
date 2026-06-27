@@ -11,7 +11,8 @@ from pathlib import Path
 
 import pandas as pd
 import requests
-from datetime import UTC, datetime
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -257,7 +258,7 @@ def read_coin_live_price(coin_id: str):
             "coin": resolved_id,
             "price": round(data[resolved_id]["usd"]),
             "currency": "usd",
-            "timestamp": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
+            "timestamp": datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST"),
         }
     except HTTPException:
         raise
