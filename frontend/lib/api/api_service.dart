@@ -74,4 +74,25 @@ class ApiService {
 
     throw Exception('Failed to load metrics: ${response.statusCode}');
   }
+
+  /// Start a background refresh of top-100 historical CSV data.
+  /// GET /collect/top100?start=0&limit=100&days=1825&force_refresh=true
+  static Future<Map<String, dynamic>> refreshTop100Data({
+    int start = 0,
+    int limit = 100,
+    int days = 1825,
+    bool forceRefresh = true,
+  }) async {
+    final uri = Uri.parse(
+      '$baseUrl/collect/top100'
+      '?start=$start&limit=$limit&days=$days&force_refresh=$forceRefresh',
+    );
+    final response = await http.get(uri);
+
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    }
+
+    throw Exception('Failed to start data refresh: ${response.statusCode}');
+  }
 }

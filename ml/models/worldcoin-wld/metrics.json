@@ -1,9 +1,9 @@
 {
   "linear_mae": 0.03,
   "linear_rmse": 0.05,
-  "linear_r2": 0.8771,
-  "forest_mae": 0.03,
+  "linear_r2": 0.8711,
+  "forest_mae": 0.04,
   "forest_rmse": 0.05,
-  "forest_r2": 0.867,
+  "forest_r2": 0.8642,
   "best_model": "linear_regression"
 }

@@ -39,8 +39,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
   bool _loading = true;
   String? _error;
 
+  bool _dataRefreshRunning = false;
+  bool _dataRefreshCompleted = false;
+  String? _dataRefreshStatus;
+  String? _dataRefreshError;
+  List<String> _dataRefreshCoinNames = [];
+
   Timer? _livePriceTimer;
   late final TextEditingController _forecastDaysController;
+  late final TextEditingController _collectionDaysController;
 
   final NumberFormat _cryptoPriceGteOneFormat =
       NumberFormat.currency(symbol: '\$', decimalDigits: 2);
@@ -62,6 +69,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void initState() {
     super.initState();
     _forecastDaysController = TextEditingController(text: '7');
+    _collectionDaysController = TextEditingController(text: '365');
     _loadCoins();
   }
 
@@ -69,6 +77,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void dispose() {
     _livePriceTimer?.cancel();
     _forecastDaysController.dispose();
+    _collectionDaysController.dispose();
     super.dispose();
   }
 
@@ -239,6 +248,181 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (best == 'linear_regression') return 'Linear Regression';
     if (best == 'random_forest') return 'Random Forest';
     return 'Unknown';
+  }
+
+  List<String> _topCoinNames() {
+    return _coins
+        .map((coin) {
+          final item = coin as Map<String, dynamic>;
+          return item['name'] as String? ?? item['id'] as String;
+        })
+        .toList();
+  }
+
+  int _resolveCollectionDays(String value) {
+    final days = int.tryParse(value.trim());
+    if (days == null || days < 1) {
+      return 365;
+    }
+    return days;
+  }
+
+  Future<void> _refreshCryptoData() async {
+    final collectionDays = _resolveCollectionDays(_collectionDaysController.text);
+
+    setState(() {
+      _collectionDaysController.text = collectionDays.toString();
+      _dataRefreshRunning = true;
+      _dataRefreshCompleted = false;
+      _dataRefreshError = null;
+      _dataRefreshStatus = 'Refreshing crypto data...';
+      _dataRefreshCoinNames = _topCoinNames();
+    });
+
+    try {
+      await ApiService.refreshTop100Data(days: collectionDays);
+      if (!mounted) return;
+
+      setState(() {
+        _dataRefreshRunning = false;
+        _dataRefreshCompleted = true;
+        _dataRefreshStatus = 'Collection started in backend...';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _dataRefreshRunning = false;
+        _dataRefreshCompleted = false;
+        _dataRefreshError = e.toString();
+        _dataRefreshStatus = null;
+      });
+    }
+  }
+
+  void _showTrainModelsInstructions() {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: cardColor,
+        title: const Text(
+          'Train Models',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        ),
+        content: const Text(
+          'Flutter cannot run Python training directly.\n\n'
+          'Run from terminal:\n'
+          'cd ml\n'
+          'python train_all.py',
+          style: TextStyle(color: Colors.white70, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close', style: TextStyle(color: accent)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _dataRefreshStatusPanel() {
+    if (_dataRefreshError != null) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: background,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.redAccent.withValues(alpha: 0.4)),
+        ),
+        child: Text(
+          _dataRefreshError!,
+          style: const TextStyle(color: Colors.redAccent),
+        ),
+      );
+    }
+
+    if (_dataRefreshStatus == null) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (_dataRefreshRunning) ...[
+            Row(
+              children: [
+                const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: accent),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  _dataRefreshStatus!,
+                  style: const TextStyle(color: Colors.white70),
+                ),
+              ],
+            ),
+          ] else ...[
+            Text(
+              _dataRefreshStatus!,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+          if (_dataRefreshCoinNames.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            const Text('Refreshing:', style: TextStyle(color: Colors.white54)),
+            const SizedBox(height: 8),
+            ..._dataRefreshCoinNames.take(10).map(
+              (name) => Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text(name, style: const TextStyle(color: Colors.white70)),
+              ),
+            ),
+            if (_dataRefreshCoinNames.length > 10)
+              Text(
+                '... and ${_dataRefreshCoinNames.length - 10} more',
+                style: const TextStyle(color: Colors.white54),
+              ),
+          ],
+          if (_dataRefreshCompleted) ...[
+            const SizedBox(height: 12),
+            const Text(
+              'Collection runs in background. Monitor backend terminal for completion.',
+              style: TextStyle(color: Colors.white54, fontSize: 12),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Return to ML training',
+              style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                onPressed: _showTrainModelsInstructions,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: accent,
+                  side: const BorderSide(color: accent),
+                ),
+                child: const Text('Train Models (after collection finishes)'),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   /// CSV history plus the latest live price as the newest actual point.
@@ -728,6 +912,67 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 ],
                                 onChanged: _onModelChanged,
                               ),
+                              const SizedBox(height: 16),
+                              const Text(
+                                'Collection history days:',
+                                style: TextStyle(color: Colors.white70),
+                              ),
+                              const SizedBox(height: 8),
+                              SizedBox(
+                                width: 88,
+                                child: TextField(
+                                  controller: _collectionDaysController,
+                                  keyboardType: TextInputType.number,
+                                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                                  enabled: !_dataRefreshRunning,
+                                  style: const TextStyle(color: Colors.white),
+                                  decoration: InputDecoration(
+                                    filled: true,
+                                    fillColor: background,
+                                    enabledBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                      borderSide: const BorderSide(color: Colors.white24),
+                                    ),
+                                    focusedBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                      borderSide: const BorderSide(color: accent),
+                                    ),
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 10,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              SizedBox(
+                                width: double.infinity,
+                                child: ElevatedButton.icon(
+                                  onPressed: _dataRefreshRunning ? null : _refreshCryptoData,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: accent,
+                                    foregroundColor: Colors.white,
+                                    disabledBackgroundColor: accent.withValues(alpha: 0.4),
+                                    disabledForegroundColor: Colors.white54,
+                                    padding: const EdgeInsets.symmetric(vertical: 12),
+                                  ),
+                                  icon: _dataRefreshRunning
+                                      ? const SizedBox(
+                                          width: 16,
+                                          height: 16,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: Colors.white,
+                                          ),
+                                        )
+                                      : const Icon(Icons.refresh),
+                                  label: const Text('Refresh Data'),
+                                ),
+                              ),
+                              if (_dataRefreshStatus != null || _dataRefreshError != null) ...[
+                                const SizedBox(height: 12),
+                                _dataRefreshStatusPanel(),
+                              ],
                               const SizedBox(height: 12),
                               Container(
                                 width: double.infinity,
