@@ -42,7 +42,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Timer? _livePriceTimer;
   late final TextEditingController _forecastDaysController;
 
-  final NumberFormat _priceFormat = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+  final NumberFormat _cryptoPriceGteOneFormat =
+      NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+
+  /// Crypto-friendly price display: 2 decimals at or above $1, up to 6 below $1.
+  String formatCryptoPrice(double price) {
+    if (price.abs() >= 1) {
+      return _cryptoPriceGteOneFormat.format(price);
+    }
+
+    final fixed = price.toStringAsFixed(6);
+    final trimmed = fixed
+        .replaceFirst(RegExp(r'0+$'), '')
+        .replaceFirst(RegExp(r'\.$'), '');
+    return '\$$trimmed';
+  }
 
   @override
   void initState() {
@@ -338,7 +352,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
       items.add(
         LineTooltipItem(
-          '$label:\n${_priceFormat.format(spot.y)}',
+          '$label:\n${formatCryptoPrice(spot.y)}',
           TextStyle(color: color, fontWeight: FontWeight.w600, fontSize: 12),
         ),
       );
@@ -389,7 +403,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  price != null ? _priceFormat.format(price) : '--',
+                  price != null ? formatCryptoPrice(price) : '--',
                   style: const TextStyle(
                     color: accent,
                     fontSize: 28,
@@ -457,6 +471,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
         }),
         titlesData: const FlTitlesData(show: false),
         borderData: FlBorderData(show: false),
+        lineTouchData: LineTouchData(
+          touchTooltipData: LineTouchTooltipData(
+            getTooltipItems: (touchedSpots) {
+              return touchedSpots
+                  .map(
+                    (spot) => LineTooltipItem(
+                      formatCryptoPrice(spot.y),
+                      const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 12,
+                      ),
+                    ),
+                  )
+                  .toList();
+            },
+          ),
+        ),
         lineBarsData: [
           LineChartBarData(
             spots: spots,
@@ -610,7 +642,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             _periodButton('30 days', 30),
                             _periodButton('6 months', 180),
                             _periodButton('1 year', 365),
-                            _periodButton('All', 1825),
                           ],
                         ),
                       ),

@@ -256,7 +256,7 @@ def read_coin_live_price(coin_id: str):
 
         return {
             "coin": resolved_id,
-            "price": round(data[resolved_id]["usd"]),
+            "price": round(data[resolved_id]["usd"], 6),
             "currency": "usd",
             "timestamp": datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST"),
         }
