@@ -17,7 +17,12 @@ from coingecko import get_historical_data, get_top_100_coins, resolve_coin_id
 RAW_DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
 
 
-def collect_historical_data(coin_id: str, days: int = 365, resolve: bool = True) -> pd.DataFrame:
+def collect_historical_data(
+    coin_id: str,
+    days: int = 365,
+    resolve: bool = True,
+    force_refresh: bool = False,
+) -> pd.DataFrame:
     """
     Fetch historical prices for a coin and save them to a CSV file.
 
@@ -26,6 +31,7 @@ def collect_historical_data(coin_id: str, days: int = 365, resolve: bool = True)
         days:    How many days of history to download (default: 365).
         resolve: If True, convert symbols to CoinGecko ids. Set False when coin_id
                  already comes from get_top_100_coins().
+        force_refresh: If True, fetch from CoinGecko and overwrite an existing CSV.
 
     Returns:
         A pandas DataFrame with columns: date, price
@@ -41,7 +47,7 @@ def collect_historical_data(coin_id: str, days: int = 365, resolve: bool = True)
     csv_path = RAW_DATA_DIR / f"{resolved_id}.csv"
 
     # If CSV already exists, load it and skip the CoinGecko API call (avoids 429 errors).
-    if csv_path.exists():
+    if not force_refresh and csv_path.exists():
         df = pd.read_csv(csv_path)
         df["date"] = pd.to_datetime(df["date"])
         return df[["date", "price"]]
@@ -83,7 +89,12 @@ def collect_historical_data(coin_id: str, days: int = 365, resolve: bool = True)
     return df
 
 
-def collect_top_100_data(start: int = 0, limit: int = 25, days: int = 365) -> dict:
+def collect_top_100_data(
+    start: int = 0,
+    limit: int = 25,
+    days: int = 365,
+    force_refresh: bool = False,
+) -> dict:
     """
     Download historical data for the top 100 coins and save each as a CSV file.
 
@@ -91,6 +102,9 @@ def collect_top_100_data(start: int = 0, limit: int = 25, days: int = 365) -> di
         data/raw/bitcoin.csv
         data/raw/ethereum.csv
         data/raw/dogecoin.csv
+
+    Args:
+        force_refresh: If True, re-fetch and overwrite existing CSV files.
 
     Returns:
         Dictionary with coins_collected count and failed_coins list.
@@ -109,16 +123,22 @@ def collect_top_100_data(start: int = 0, limit: int = 25, days: int = 365) -> di
         csv_path = RAW_DATA_DIR / f"{coin_id}.csv"
 
         # Skip CoinGecko if we already have this coin's CSV file.
-        if csv_path.exists():
+        if not force_refresh and csv_path.exists():
             print(f"Skipping {coin_id} (already exists)")
             collected_count += 1
             continue
 
-        print(f"Collecting {coin_id} {index}/{total_coins}")
+        action = "Refreshing" if force_refresh and csv_path.exists() else "Collecting"
+        print(f"{action} {coin_id} {index}/{total_coins}")
 
         try:
             # coin_id is already a CoinGecko id from the top 100 list — no symbol resolution needed.
-            collect_historical_data(coin_id, days=days, resolve=False)
+            collect_historical_data(
+                coin_id,
+                days=days,
+                resolve=False,
+                force_refresh=force_refresh,
+            )
             collected_count += 1
         except Exception as exc:
             # Keep going even if one coin fails (rate limit, network, missing data).

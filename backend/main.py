@@ -316,6 +316,7 @@ def collect_top_100_coin_data(
     start: int = 0,
     limit: int = 25,
     days: int = 365,
+    force_refresh: bool = False,
 ):
     """
     Start collecting historical price data for a batch of the top 100 cryptocurrencies.
@@ -325,6 +326,7 @@ def collect_top_100_coin_data(
     /collect/top100?start=25&limit=25
     /collect/top100?start=50&limit=25
     /collect/top100?start=75&limit=25
+    /collect/top100?start=0&limit=25&force_refresh=true
 
     Collection runs in the background.
     """
@@ -343,6 +345,7 @@ def collect_top_100_coin_data(
         start,
         limit,
         days,
+        force_refresh,
     )
 
     return {
